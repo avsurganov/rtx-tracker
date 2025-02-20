@@ -18,7 +18,7 @@ object RTXTracker extends App {
     "https://www.microcenter.com/product/690267/msi-nvidia-geforce-rtx-5080-ventus-3x-plus-overclocked-triple-fan-16gb-gddr7-pcie-50-graphics-card",
     "https://www.microcenter.com/product/690263/zotac-nvidia-geforce-rtx-5080-gaming-solid-overclocked-triple-fan-16gb-gddr7-pcie-50-graphics-card",
     "https://www.microcenter.com/product/689737/asus-nvidia-geforce-rtx-5080-prime-overclocked-triple-fan-16gb-gddr7-pcie-50-graphics-card",
-    "https://www.microcenter.com/product/690232/msi-nvidia-geforce-rtx-5080-suprim-liquid-soc-overclocked-liquid-cooled-16gb-gddr7-pcie-50-graphics-card",
+    "https://www.microcenter.com/product/690232/msi-nvidia-geforce-rtx-5080-suprim-liquid-soc-overclocked-liquid-cooled-16gb-gddr7-pcie-50-graphics-card"
   ).flatMap { url =>
     List(s"$url?storeid=151", s"$url?storeid=025")
   }

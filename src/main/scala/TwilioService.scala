@@ -9,17 +9,25 @@ trait TwilioService {
   def sendSms(messageBody: String): Unit
 }
 
-class TwilioServiceImpl(accountSid: String, authToken: String, fromNumber: String, to: String)(implicit system: ActorSystem) extends TwilioService {
+class TwilioServiceImpl(
+    accountSid: String,
+    authToken: String,
+    fromNumber: String,
+    to: String
+)(implicit system: ActorSystem)
+    extends TwilioService {
   private val log = system.log
 
   Twilio.init(accountSid, authToken)
 
   override def sendSms(messageBody: String): Unit = {
-    val message = Message.creator(
-      new PhoneNumber(to),
-      new PhoneNumber(fromNumber),
-      messageBody
-    ).create()
+    val message = Message
+      .creator(
+        new PhoneNumber(to),
+        new PhoneNumber(fromNumber),
+        messageBody
+      )
+      .create()
     log.info(s"Sent message with SID: ${message.getSid}")
   }
 }
@@ -27,12 +35,16 @@ class TwilioServiceImpl(accountSid: String, authToken: String, fromNumber: Strin
 object TwilioServiceImpl {
   private lazy val dotenv: Dotenv = Dotenv.load()
 
-  private def getEnvOrThrow(key: String)(implicit system: ActorSystem): String = {
+  private def getEnvOrThrow(
+      key: String
+  )(implicit system: ActorSystem): String = {
     val log = Logging(system, getClass.getName)
     Option(dotenv.get(key)).orElse(sys.env.get(key)) match {
       case Some(value) => value
       case None =>
-        log.error(s"Error: Missing environment variable '$key'. Shutting down the application.")
+        log.error(
+          s"Error: Missing environment variable '$key'. Shutting down the application."
+        )
         system.terminate()
         "" // Unreachable.
     }
@@ -40,9 +52,9 @@ object TwilioServiceImpl {
 
   def apply()(implicit system: ActorSystem): TwilioService = {
     val accountSid = getEnvOrThrow("TWILIO_ACCOUNT_SID")
-    val authToken  = getEnvOrThrow("TWILIO_AUTH_TOKEN")
+    val authToken = getEnvOrThrow("TWILIO_AUTH_TOKEN")
     val fromNumber = getEnvOrThrow("TWILIO_FROM_NUMBER")
-    val to         = getEnvOrThrow("TO_NUMBER")
+    val to = getEnvOrThrow("TO_NUMBER")
     new TwilioServiceImpl(accountSid, authToken, fromNumber, to)
   }
 }

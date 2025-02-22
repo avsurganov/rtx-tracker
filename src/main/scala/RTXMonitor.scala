@@ -1,11 +1,12 @@
 import org.apache.pekko.actor.{Actor, ActorLogging, Props}
 import org.apache.pekko.http.scaladsl.Http
 import org.apache.pekko.http.scaladsl.model.HttpRequest
+import org.apache.pekko.http.scaladsl.settings.ConnectionPoolSettings
 import org.apache.pekko.stream.Materializer
 import org.jsoup.Jsoup
-
 import scala.concurrent.duration.*
 import scala.util.{Failure, Success}
+import scala.util.Random
 
 class RTXMonitor(url: String)(implicit twilioService: TwilioService)
     extends Actor
@@ -15,17 +16,21 @@ class RTXMonitor(url: String)(implicit twilioService: TwilioService)
 
   implicit val materializer: Materializer = Materializer(context.system)
 
-  private val cooldownMillis: Long = 15 * 60 * 1000
-  private val errorCooldownMillis: Long = 60 * 10 * 60 * 1000
+  private val cooldownMillis: Long = 15.minutes.toMillis
+  private val errorCooldownMillis: Long = 10.hours.toMillis
+
+  private val http = Http()(context.system)
+  private val settings = ConnectionPoolSettings(context.system)
+    .withMaxOpenRequests(64) // Increase open requests
 
   private val gpuCheck = context.system.scheduler.scheduleAtFixedRate(
-    initialDelay = 0.seconds,
-    interval = 5.second
+    initialDelay = Random.nextInt(5).seconds, // Prevents burst requests
+    interval = 10.seconds
   )(() => self ! Tick)
 
   private val healthCheck = context.system.scheduler.scheduleAtFixedRate(
     initialDelay = 30.seconds,
-    interval = (60 * 60).second
+    interval = 1.hour
   )(() => self ! HealthCheck)
 
   override def preStart(): Unit = {
@@ -47,66 +52,72 @@ class RTXMonitor(url: String)(implicit twilioService: TwilioService)
   ): Receive = {
     case Tick =>
       val currentTime = System.currentTimeMillis()
-      Http()(context.system).singleRequest(HttpRequest(uri = url)).onComplete {
-        case Success(response) =>
-          response.entity.toStrict(3.seconds).onComplete {
-            case Success(strictEntity) =>
-              val htmlContent = strictEntity.data.utf8String
-              val doc = Jsoup.parse(htmlContent)
+      http
+        .singleRequest(HttpRequest(uri = url), settings = settings)
+        .onComplete {
+          case Success(response) =>
+            response.entity.toStrict(5.seconds).onComplete {
+              case Success(strictEntity) =>
+                val htmlContent = strictEntity.data.utf8String
+                val doc = Jsoup.parse(htmlContent)
 
-              val inventoryText = doc.select("#pnlInventory").text().trim
-              val productDetailsElem = doc.select("#product-details-control")
-              val productName = productDetailsElem
-                .select("div.product-header h1 span")
-                .text()
-                .trim
-              val skuText = productDetailsElem.select("span.sku").text().trim
-              val sku = skuText.replace("SKU:", "").trim
+                val inventoryText = doc.select("#pnlInventory").text().trim
+                val productDetailsElem = doc.select("#product-details-control")
+                val productName = productDetailsElem
+                  .select("div.product-header h1 span")
+                  .text()
+                  .trim
+                val skuText = productDetailsElem.select("span.sku").text().trim
+                val sku = skuText.replace("SKU:", "").trim
 
-              val newInStockAlert = {
-                if (
-                  inventoryText.toUpperCase
-                    .contains("IN STOCK") && lastInStockAlert
-                    .forall(ts => currentTime - ts >= cooldownMillis)
-                ) {
-                  val messageBody =
-                    s"CHIP IN STOCK\n\nProduct: $productName\n\nInventory: $inventoryText\n\nSKU: $sku"
-                  log.info(messageBody)
-                  twilioService.sendSms(messageBody)
-                  currentTime.some
-                } else lastInStockAlert
-              }
+                val newInStockAlert = {
+                  if (
+                    inventoryText.toUpperCase.contains("IN STOCK") &&
+                    lastInStockAlert
+                      .forall(ts => currentTime - ts >= cooldownMillis)
+                  ) {
+                    val messageBody =
+                      s"CHIP IN STOCK\nProduct: $productName\nInventory: $inventoryText\nSKU: $sku"
+                    log.info(messageBody)
+                    twilioService
+                      .sendSms(messageBody) // Send in chunks if needed
+                    Some(currentTime)
+                  } else lastInStockAlert
+                }
 
-              val newErrorAlert =
-                lastErrorAlert // No error here; retain the error state.
-              self ! UpdateState(newInStockAlert, newErrorAlert)
+                self ! UpdateState(newInStockAlert, lastErrorAlert)
 
-            case Failure(e) =>
-              log.error(s"Failed to retrieve strict entity from $url: $e")
-              val newErrorAlert =
-                if (
-                  lastErrorAlert
-                    .forall(ts => currentTime - ts >= errorCooldownMillis)
-                ) {
-                  twilioService
-                    .sendSms(s"Error: Failed to retrieve content from $url: $e")
-                  currentTime.some
-                } else lastErrorAlert
-              self ! UpdateState(lastInStockAlert, newErrorAlert)
-          }
-        case Failure(exception) =>
-          log.error(s"Request to $url failed: $exception")
-          val newErrorAlert =
-            if (
-              lastErrorAlert
-                .forall(ts => currentTime - ts >= errorCooldownMillis)
-            ) {
-              twilioService
-                .sendSms(s"Error: Request to $url failed: $exception")
-              currentTime.some
-            } else lastErrorAlert
-          self ! UpdateState(lastInStockAlert, newErrorAlert)
-      }
+              case Failure(e) =>
+                log.error(
+                  s"Failed to retrieve content from $url: ${e.getMessage}"
+                )
+                val newErrorAlert =
+                  if (
+                    lastErrorAlert
+                      .forall(ts => currentTime - ts >= errorCooldownMillis)
+                  ) {
+//                    twilioService.sendSms(
+//                      s"Error retrieving content from $url: ${e.getMessage}"
+//                    )
+                    Some(currentTime)
+                  } else lastErrorAlert
+                self ! UpdateState(lastInStockAlert, newErrorAlert)
+            }
+
+          case Failure(exception) =>
+            log.error(s"Request to $url failed: ${exception.getMessage}")
+            val newErrorAlert =
+              if (
+                lastErrorAlert
+                  .forall(ts => currentTime - ts >= errorCooldownMillis)
+              ) {
+//                twilioService.sendSms(
+//                  s"Error: Request to $url failed: ${exception.getMessage}"
+//                )
+                Some(currentTime)
+              } else lastErrorAlert
+            self ! UpdateState(lastInStockAlert, newErrorAlert)
+        }
 
     case UpdateState(newInStock, newError) =>
       context.become(active(newInStock, newError))

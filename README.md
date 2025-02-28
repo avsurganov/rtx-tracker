@@ -155,9 +155,9 @@ If you prefer to run the project in an IDE, you can use IntelliJ IDEA Community 
 4. **Run the Project**
    - Open the `RTXTracker` class.
    - Click the **Run** button or use:
-     ^^^sh
+     ```sh
      sbt run
-     ^^^
+     ```
 
 Now you're ready to develop and debug RTXMonitor in IntelliJ IDEA! 🚀
 

@@ -21,7 +21,7 @@ class RTXMonitor(url: String)(implicit twilioService: TwilioService)
 
   private val http = Http()(context.system)
   private val settings = ConnectionPoolSettings(context.system)
-    .withMaxOpenRequests(64) // Increase open requests
+    .withMaxOpenRequests(256) // Increase open requests
 
   private val gpuCheck = context.system.scheduler.scheduleAtFixedRate(
     initialDelay = Random.nextInt(5).seconds, // Prevents burst requests
@@ -77,7 +77,7 @@ class RTXMonitor(url: String)(implicit twilioService: TwilioService)
                       .forall(ts => currentTime - ts >= cooldownMillis)
                   ) {
                     val messageBody =
-                      s"CHIP IN STOCK\nProduct: $productName\nInventory: $inventoryText\nSKU: $sku"
+                      s"CHIP IN STOCK\n\nProduct: $productName\n\nInventory: $inventoryText\n\nSKU: $sku\n\nURL: $url"
                     log.info(messageBody)
                     twilioService
                       .sendSms(messageBody) // Send in chunks if needed
@@ -96,9 +96,6 @@ class RTXMonitor(url: String)(implicit twilioService: TwilioService)
                     lastErrorAlert
                       .forall(ts => currentTime - ts >= errorCooldownMillis)
                   ) {
-//                    twilioService.sendSms(
-//                      s"Error retrieving content from $url: ${e.getMessage}"
-//                    )
                     Some(currentTime)
                   } else lastErrorAlert
                 self ! UpdateState(lastInStockAlert, newErrorAlert)
@@ -111,9 +108,6 @@ class RTXMonitor(url: String)(implicit twilioService: TwilioService)
                 lastErrorAlert
                   .forall(ts => currentTime - ts >= errorCooldownMillis)
               ) {
-//                twilioService.sendSms(
-//                  s"Error: Request to $url failed: ${exception.getMessage}"
-//                )
                 Some(currentTime)
               } else lastErrorAlert
             self ! UpdateState(lastInStockAlert, newErrorAlert)

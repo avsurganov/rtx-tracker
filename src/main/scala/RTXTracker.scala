@@ -5,6 +5,7 @@ object RTXTracker extends App {
   implicit val twilioService: TwilioService = TwilioServiceImpl()
 
   private val urls: List[String] = List(
+    // Add the GPUs you want to track here.
     "https://www.microcenter.com/product/690481/pny-nvidia-geforce-rtx-5080-overclocked-triple-fan-16gb-gddr7-pcie-50-graphics-card",
     "https://www.microcenter.com/product/690266/msi-nvidia-geforce-rtx-5080-ventus-3x-overclocked-triple-fan-16gb-gddr7-pcie-50-graphics-card",
     "https://www.microcenter.com/product/690482/pny-nvidia-geforce-rtx-5080-epic-x-rgb-overclocked-triple-fan-16gb-gddr7-pcie-50-graphics-card",
@@ -21,7 +22,10 @@ object RTXTracker extends App {
     "https://www.microcenter.com/product/690232/msi-nvidia-geforce-rtx-5080-suprim-liquid-soc-overclocked-liquid-cooled-16gb-gddr7-pcie-50-graphics-card",
     "https://www.microcenter.com/product/690049/asus-nvidia-geforce-rtx-5070-ti-prime-triple-fan-16gb-gddr7-pcie-50-graphics-card"
   ).flatMap { url =>
-    List(s"$url?storeid=151", s"$url?storeid=025")
+    List(
+      s"$url?storeid=151", // Chicago, IL
+      s"$url?storeid=025" // Westmont, IL
+    )
   }
 
   urls.foreach { url =>

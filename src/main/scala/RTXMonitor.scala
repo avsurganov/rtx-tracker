@@ -4,125 +4,101 @@ import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.settings.ConnectionPoolSettings
 import org.apache.pekko.stream.Materializer
 import org.jsoup.Jsoup
-import scala.concurrent.duration.*
-import scala.util.{Failure, Success}
-import scala.util.Random
 
-class RTXMonitor(url: String)(implicit twilioService: TwilioService)
-    extends Actor
-    with ActorLogging {
-  import RTXMonitor.*
+import scala.concurrent.duration.*
+import scala.util.{Failure, Success, Random}
+
+class RTXMonitor(url: String)(implicit twilioService: TwilioService) extends Actor with ActorLogging {
+
+  import RTXMonitor._
   import context.dispatcher
 
   implicit val materializer: Materializer = Materializer(context.system)
 
-  private val cooldownMillis: Long = 15.minutes.toMillis
-  private val errorCooldownMillis: Long = 10.hours.toMillis
+  private val cooldownMillis = 15.minutes.toMillis
+  private val requestTimeout = 5.seconds
 
   private val http = Http()(context.system)
   private val settings = ConnectionPoolSettings(context.system)
-    .withMaxOpenRequests(256) // Increase open requests
+    .withMaxOpenRequests(256)
 
-  private val gpuCheck = context.system.scheduler.scheduleAtFixedRate(
-    initialDelay = Random.nextInt(5).seconds, // Prevents burst requests
-    interval = 10.seconds
-  )(() => self ! Tick)
+  // Schedulers
+  private val gpuCheck = scheduleTask(10.seconds, () => self ! Tick)
+  private val healthCheck = scheduleTask(1.hour, () => self ! HealthCheck)
 
-  private val healthCheck = context.system.scheduler.scheduleAtFixedRate(
-    initialDelay = 30.seconds,
-    interval = 1.hour
-  )(() => self ! HealthCheck)
+  override def preStart(): Unit = log.info(s"RTXMonitor started for URL: $url")
+  override def postStop(): Unit = { gpuCheck.cancel(); healthCheck.cancel() }
 
-  override def preStart(): Unit = {
-    log.info(s"${self.getClass.getName} starting. Watching URL: $url")
-    super.preStart()
-  }
+  def receive: Receive = monitor(None)
 
-  override def postStop(): Unit = {
-    gpuCheck.cancel()
-    healthCheck.cancel()
-    super.postStop()
-  }
-
-  def receive: Receive = active(None, None)
-
-  private def active(
-      lastInStockAlert: Option[Long],
-      lastErrorAlert: Option[Long]
-  ): Receive = {
+  private def monitor(lastInStockAlert: Option[Long]): Receive = {
     case Tick =>
       val currentTime = System.currentTimeMillis()
-      http
-        .singleRequest(HttpRequest(uri = url), settings = settings)
-        .onComplete {
-          case Success(response) =>
-            response.entity.toStrict(5.seconds).onComplete {
-              case Success(strictEntity) =>
-                val htmlContent = strictEntity.data.utf8String
-                val doc = Jsoup.parse(htmlContent)
+      fetchHtml(url).onComplete {
+        case Success(htmlContent) =>
+          val newInStockAlert = processPage(htmlContent, currentTime, lastInStockAlert)
+          self ! UpdateState(newInStockAlert)
 
-                val inventoryText = doc.select("#pnlInventory").text().trim
-                val productDetailsElem = doc.select("#product-details-control")
-                val productName = productDetailsElem
-                  .select("div.product-header h1 span")
-                  .text()
-                  .trim
-                val skuText = productDetailsElem.select("span.sku").text().trim
-                val sku = skuText.replace("SKU:", "").trim
-
-                val newInStockAlert = {
-                  if (
-                    inventoryText.toUpperCase.contains("IN STOCK") &&
-                    lastInStockAlert
-                      .forall(ts => currentTime - ts >= cooldownMillis)
-                  ) {
-                    val messageBody =
-                      s"CHIP IN STOCK\n\nProduct: $productName\n\nInventory: $inventoryText\n\nSKU: $sku\n\nURL: $url"
-                    log.info(messageBody)
-                    twilioService
-                      .sendSms(messageBody) // Send in chunks if needed
-                    Some(currentTime)
-                  } else lastInStockAlert
-                }
-
-                self ! UpdateState(newInStockAlert, lastErrorAlert)
-
-              case Failure(e) =>
-                log.error(
-                  s"Failed to retrieve content from $url: ${e.getMessage}"
-                )
-                val newErrorAlert =
-                  if (
-                    lastErrorAlert
-                      .forall(ts => currentTime - ts >= errorCooldownMillis)
-                  ) {
-                    Some(currentTime)
-                  } else lastErrorAlert
-                self ! UpdateState(lastInStockAlert, newErrorAlert)
-            }
-
-          case Failure(exception) =>
-            log.error(s"Request to $url failed: ${exception.getMessage}")
-            val newErrorAlert =
-              if (
-                lastErrorAlert
-                  .forall(ts => currentTime - ts >= errorCooldownMillis)
-              ) {
-                Some(currentTime)
-              } else lastErrorAlert
-            self ! UpdateState(lastInStockAlert, newErrorAlert)
-        }
-
-    case UpdateState(newInStock, newError) =>
-      context.become(active(newInStock, newError))
-
-    case HealthCheck =>
-      log.info(s"${self.path.name} is healthy.")
+        case Failure(exception) =>
+          log.error(s"Request to $url failed: ${exception.getMessage}")
+      }
+    case UpdateState(newInStock) => context.become(monitor(newInStock))
+    case HealthCheck             => log.info(s"${self.path.name} is healthy.")
   }
-}
 
-implicit class OptionOps[T](val t: T) extends AnyVal {
-  def some: Option[T] = Some(t)
+  // Fetch HTML with a timeout
+  private def fetchHtml(url: String) = {
+    http
+      .singleRequest(HttpRequest(uri = url), settings = settings)
+      .flatMap(_.entity.toStrict(requestTimeout))
+      .map(_.data.utf8String)
+  }
+
+  // Process the HTML response
+  private def processPage(htmlContent: String, currentTime: Long, lastInStockAlert: Option[Long]): Option[Long] = {
+    val doc = Jsoup.parse(htmlContent)
+    val inventoryText = doc.select("#pnlInventory").text().trim.toUpperCase
+    val productName = doc
+      .select("#product-details-control div.product-header h1 span")
+      .text()
+      .trim
+    val sku = doc
+      .select("#product-details-control span.sku")
+      .text()
+      .trim
+      .replace("SKU:", "")
+      .trim
+
+    if (inventoryText.contains("IN STOCK") && isCooldownOver(lastInStockAlert, cooldownMillis, currentTime)) {
+      sendStockAlert(productName, inventoryText, sku)
+      Some(currentTime)
+    } else lastInStockAlert
+  }
+
+  // Check if cooldown period has passed
+  private def isCooldownOver(lastAlert: Option[Long], cooldown: Long, currentTime: Long): Boolean = {
+    lastAlert.forall(ts => currentTime - ts >= cooldown)
+  }
+
+  // Send stock alert
+  private def sendStockAlert(product: String, inventory: String, sku: String): Unit = {
+    val message = s"CHIP IN STOCK\n\nProduct: $product\n\nInventory: $inventory\n\nSKU: $sku\n\nURL: $url"
+    log.info(message)
+    twilioService.sendSms(message)
+  }
+
+  // Helper to schedule tasks with a random initial delay
+  private def scheduleTask(interval: FiniteDuration, task: () => Unit, initialDelay: Option[FiniteDuration] = None) =
+    context.system.scheduler
+      .scheduleAtFixedRate(
+        initialDelay = {
+          initialDelay match {
+            case Some(delay) => delay
+            case _           => Random.nextInt(5).seconds
+          }
+        },
+        interval = interval
+      )(() => task())
 }
 
 object RTXMonitor {
@@ -131,8 +107,5 @@ object RTXMonitor {
   )
   private case object Tick
   private case object HealthCheck
-  private case class UpdateState(
-      lastInStockAlert: Option[Long],
-      lastErrorAlert: Option[Long]
-  )
+  private case class UpdateState(lastInStockAlert: Option[Long])
 }

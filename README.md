@@ -5,6 +5,15 @@ RTX Tracker monitors the availability of **RTX 5080 graphics cards** on **MicroC
 
 ---
 
+## Features
+- Periodic stock checks using Apache Pekko HTTP client
+- HTML parsing with Jsoup to extract stock information
+- SMS notifications using Twilio
+- Configurable cooldown to prevent spam alerts
+- Health check logging for monitoring service status
+
+---
+
 ## **What You Need**
 Ensure you have the following before proceeding:
 
@@ -128,5 +137,30 @@ If you get an error saying **"java is not recognized"** or **"sbt is not recogni
 - Make sure the **TO_NUMBER** is verified in Twilio (for trial accounts).
 
 ---
+
+## Running in IntelliJ IDEA Community Edition
+
+If you prefer to run the project in an IDE, you can use IntelliJ IDEA Community Edition:
+
+1. **Download IntelliJ IDEA CE**
+   - Go to [JetBrains IntelliJ IDEA CE Download](https://www.jetbrains.com/idea/download/)
+   - Download and install the **Community Edition** (free version).
+
+2. **Import the Project**
+   - Open IntelliJ IDEA and select **"Open"**.
+   - Navigate to the project directory and select it.
+   - IntelliJ should automatically detect it as an **sbt project**.
+
+3. **Ensure Dependencies Are Resolved**
+   - IntelliJ will prompt you to **import sbt dependencies**. Click **Enable Auto-Import** if necessary.
+
+4. **Run the Project**
+   - Open the `RTXTracker` class.
+   - Click the **Run** button or use:
+     ^^^sh
+     sbt run
+     ^^^
+
+Now you're ready to develop and debug RTXMonitor in IntelliJ IDEA! 🚀
 
 That’s it! 🎉 **RTX Tracker** will now monitor GPU availability and send you an SMS when an RTX 5080 is in stock. 🚀  

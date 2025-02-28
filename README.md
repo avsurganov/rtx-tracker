@@ -20,14 +20,12 @@ Ensure you have the following before proceeding:
 ### **1. Install Java**
 1. Download **Java 23** from [Oracle’s official website](https://www.oracle.com/java/technologies/javase/jdk23-archive-downloads.html).
 2. Follow the installation instructions.
-3. **Restart your computer** after installation.
 
 ---
 
 ### **2. Install SBT (Scala Build Tool)**
 1. Download **SBT 1.10.7** from [here](https://www.scala-sbt.org/download.html).
 2. Follow the installation instructions.
-3. **Restart your computer** to ensure it's recognized.
 
 ---
 
